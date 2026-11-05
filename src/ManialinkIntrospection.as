@@ -600,8 +600,7 @@ namespace TmMcp {
     // Single-call tool: navigate Page_MapEditorSettings click-chain and launch the editor.
     // Drives the full 7-step button sequence (SetMenuPage + 6 clicks) for a chosen
     // mapType / environment / mood / inputDevice / difficulty combo.
-    // Returns MakeSuccess with {ok, failedAt, steps, elapsedMs, ...} — never MakeError
-    // at the protocol level, so callers always get structured diagnostics.
+    // Preserve structured diagnostics in output on both success and failure.
     Json::Value@ CreateMapMenuResult(Json::Value &in output) {
         if (output.HasKey("ok") && bool(output["ok"])) return MakeSuccess(output);
         auto result = MakeError("CreateMapViaMenu failed at " + string(output["failedAt"]),
@@ -871,7 +870,7 @@ namespace TmMcp {
         fallout["failedAt"] = "unexpected fallthrough";
         fallout["elapsedMs"] = int(Time::Now - startMs);
         fallout["steps"] = steps;
-        return MakeSuccess(fallout);
+        return CreateMapMenuResult(fallout);
     }
 
     // Invoke CControlBase::OnAction() on the resolved control. OnAction is
