@@ -278,7 +278,7 @@ namespace TmMcp {
 
     string _GetSaveAsEntryText() {
         auto frame = _GetDialogSaveAsFrame();
-        if (frame is null || !frame.IsVisible || frame.IsHiddenExternal || frame.IsHiddenInternal) return "";
+        if (frame is null) return "";
         auto entry = cast<CControlEntry>(_DlgFollowIdPath(frame, {"FrameContent", "FrameSave", "EntryFileName"}));
         if (entry is null) return "";
         auto d = cast<CGameDialogs>(entry.Nod);
