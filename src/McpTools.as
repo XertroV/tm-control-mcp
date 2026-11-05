@@ -2273,6 +2273,7 @@ Json::Value@ GetMapInfo(Json::Value &in input) {
     void AttachValidationWarning(Json::Value &inout output) {
         auto summary = BuildDialogSummary();
         output["dialogAfter"] = summary;
+        output["warning"] = "";
         bool blocking = DialogIsBlocking(summary) || _LeaveDialogIsUp();
         auto frames = summary["editorFrames"];
         for (uint i = 0; i < frames.Length; i++) {

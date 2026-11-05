@@ -23,3 +23,13 @@ def test_editor_temp_message_ignores_hidden_stale_label():
     text = (ROOT / "src/McpTools.as").read_text()
     body = text[text.index("string _GetEditorTempMessage("):text.index("Json::Value@ GetMenuFrameTree(")]
     assert "!frame.IsVisible" in body
+
+
+def test_public_protocol_derives_warning_from_its_final_snapshot():
+    protocol = (ROOT / "src/Protocol.as").read_text()
+    body = protocol[protocol.index("void AttachDialogAfterTool("):protocol.index("Json::Value@ HandlePayload(")]
+    assert body.index("yield();") < body.index('name == "ControlValidation"')
+    assert "AttachValidationWarning(output);" in body
+    helper = (ROOT / "src/McpTools.as").read_text()
+    helper = helper[helper.index("void AttachValidationWarning("):helper.index("Json::Value@ ControlValidation(")]
+    assert 'output["warning"] = "";' in helper
