@@ -602,6 +602,15 @@ namespace TmMcp {
     // mapType / environment / mood / inputDevice / difficulty combo.
     // Returns MakeSuccess with {ok, failedAt, steps, elapsedMs, ...} — never MakeError
     // at the protocol level, so callers always get structured diagnostics.
+    Json::Value@ CreateMapMenuResult(Json::Value &in output) {
+        if (output.HasKey("ok") && bool(output["ok"])) return MakeSuccess(output);
+        auto result = MakeError("CreateMapViaMenu failed at " + string(output["failedAt"]),
+            "CREATE_MAP_FAILED", true, "Menu",
+            "Inspect failedAt/expectedFrame/lastObserved. Disable MapEditorUseQuickstart for this menu chain. For a direct default map, use EditNewMap with an environment; it does not reproduce every menu option.");
+        result["output"] = output;
+        return result;
+    }
+
     Json::Value@ CreateMapViaMenu(Json::Value &in input) {
         // --- Validate required fields ---
         string[] requiredFields = { "mapType", "environment", "mood", "inputDevice", "difficulty", "timeoutMs" };
@@ -665,7 +674,7 @@ namespace TmMcp {
                 rv["lastObserved"] = upstreamErr;
                 rv["elapsedMs"] = int(Time::Now - startMs);
                 rv["steps"] = steps;
-                return MakeSuccess(rv);
+                return CreateMapMenuResult(rv);
             }
         }
 
@@ -702,7 +711,7 @@ namespace TmMcp {
             rv["elapsedMs"] = int(Time::Now - startMs);
             rv["steps"] = steps;
             rv["note"] = "Page_MapEditorSettings did not appear. Ensure game is in main menu and QuickStart is disabled (MapEditorUseQuickstart must be off).";
-            return MakeSuccess(rv);
+            return CreateMapMenuResult(rv);
         }
 
         // Define the step sequence:
@@ -759,7 +768,7 @@ namespace TmMcp {
                 rv["lastObserved"] = "button '" + btnId + "' not present on Page_MapEditorSettings (expected frame from previous step may not have rendered yet)";
                 rv["elapsedMs"] = int(Time::Now - startMs);
                 rv["steps"] = steps;
-                return MakeSuccess(rv);
+                return CreateMapMenuResult(rv);
             }
             Json::Value clickInput = Json::Object();
             clickInput["indexPath"] = btnIdxPath;
@@ -781,7 +790,7 @@ namespace TmMcp {
                 rv["lastObserved"] = clickErr;
                 rv["elapsedMs"] = int(Time::Now - startMs);
                 rv["steps"] = steps;
-                return MakeSuccess(rv);
+                return CreateMapMenuResult(rv);
             }
 
             uint stepStart = Time::Now;
@@ -808,7 +817,7 @@ namespace TmMcp {
                     rv["lastObserved"] = "timeout waiting for editor mode";
                     rv["elapsedMs"] = int(Time::Now - startMs);
                     rv["steps"] = steps;
-                    return MakeSuccess(rv);
+                    return CreateMapMenuResult(rv);
                 }
 
                 // Success
@@ -817,7 +826,7 @@ namespace TmMcp {
                 rv["finalMode"] = DetectGameModeName();
                 rv["elapsedMs"] = int(Time::Now - startMs);
                 rv["steps"] = steps;
-                return MakeSuccess(rv);
+                return CreateMapMenuResult(rv);
 
             } else {
                 // Poll for expectFrame to become visible (max 1500ms, 100ms interval).
@@ -851,7 +860,7 @@ namespace TmMcp {
                     rv["lastObserved"] = lastSeen;
                     rv["elapsedMs"] = int(Time::Now - startMs);
                     rv["steps"] = steps;
-                    return MakeSuccess(rv);
+                    return CreateMapMenuResult(rv);
                 }
             }
         }
