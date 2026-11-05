@@ -12,7 +12,7 @@ import time
 from tm_get_running_pids import find_game_dialogs
 
 
-def socket_failure(message, pretty, pids, host):
+def socket_failure(message, pretty, pids, host, fallback_code=4):
     # These windows belong to local PIDs; never attach them to a remote server.
     dialogs = find_game_dialogs(pids) if pids and host in {"localhost", "127.0.0.1", "::1"} else []
     confirmed = next((d for d in dialogs if d["kind"] in {"crash", "message"}), None)
@@ -21,7 +21,7 @@ def socket_failure(message, pretty, pids, host):
             "No crash/message box was identified (display inspection may be unavailable). "
             "If connected but no reply arrived, the server loop may have stopped; inspect Openplanet.log.")
     print_json_error(message, pretty, trackmaniaPids=pids, dialogs=dialogs, hint=hint)
-    return 10 if confirmed else 4
+    return 14 if confirmed else fallback_code
 
 
 def is_trackmania_process(cmdline: bytes) -> bool:
@@ -590,12 +590,10 @@ def main() -> int:
         try:
             wait_resp = wait_until_mode(args.host, args.port, args.timeout, args.wait_mode, args.wait_timeout)
         except (ConnectionRefusedError, TimeoutError, socket.timeout, OSError, json.JSONDecodeError) as exc:
-            print_json_error(
+            return socket_failure(
                 f"wait-mode failed contacting {args.host}:{args.port}: {exc}",
-                args.pretty,
-                trackmaniaPids=pids,
+                args.pretty, pids, args.host, 10,
             )
-            return 10
         out = tool_result_output(wait_resp) if isinstance(wait_resp, dict) else None
         if out is None or not out.get("ok", False):
             print_json_error(
@@ -610,12 +608,10 @@ def main() -> int:
         try:
             wait_resp = wait_until_ready(args.host, args.port, args.timeout, args.until_ready, args.wait_timeout)
         except (ConnectionRefusedError, TimeoutError, socket.timeout, OSError, json.JSONDecodeError) as exc:
-            print_json_error(
+            return socket_failure(
                 f"until-ready failed contacting {args.host}:{args.port}: {exc}",
-                args.pretty,
-                trackmaniaPids=pids,
+                args.pretty, pids, args.host, 12,
             )
-            return 12
         out = tool_result_output(wait_resp) if isinstance(wait_resp, dict) else None
         if out is None or not out.get("ok", False):
             print_json_error(
@@ -642,13 +638,10 @@ def main() -> int:
             try:
                 schemas = load_schemas(args.host, args.port, args.timeout, args.refresh_schemas)
             except (ConnectionRefusedError, TimeoutError, socket.timeout, OSError, RuntimeError, json.JSONDecodeError) as exc:
-                print_json_error(
+                return socket_failure(
                     f"Could not load tool schemas from {args.host}:{args.port}: {exc}",
-                    args.pretty,
-                    trackmaniaPids=pids,
-                    hint="Schemas are fetched via the 'tools' route; ensure the plugin socket is responsive, or drop --strict/--refresh-schemas.",
+                    args.pretty, pids, args.host, 7,
                 )
-                return 7
             schema = schemas.get(args.route_or_tool)
             if schema is None:
                 print_json_error(

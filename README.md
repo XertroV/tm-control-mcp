@@ -248,7 +248,7 @@ Errors may include structured fields:
 
 On a local socket failure, the client checks PID-owned X11/Wine windows for a
 crash or message box. It returns `dialogs` with title/metadata evidence and exit
-code **10** when such a box is identified; ordinary transport failures remain
+code **14** when such a box is identified; ordinary transport failures remain
 code **4**. Unclassified secondary windows are candidates only. Missing display
 tools or native Wayland windows leave detection unavailable, so an empty list
 does not prove the game is healthy. No window is activated, dismissed, or captured.
