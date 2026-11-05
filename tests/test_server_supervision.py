@@ -12,7 +12,7 @@ def test_restart_only_after_owned_worker_terminates(as_runner, tmp_path):
 void RunTests() {
     Check(!TmMcp::ShouldRestartSocketLoop(false, true, false), "shutdown never restarts");
     Check(!TmMcp::ShouldRestartSocketLoop(true, true, true), "live worker remains owned even during stall");
-    Check(!TmMcp::ShouldRestartSocketLoop(true, false, false), "unassigned worker not presumed dead");
+    Check(TmMcp::ShouldRestartSocketLoop(true, false, false), "missing worker is a visible retry, not a silent orphan");
     Check(TmMcp::ShouldRestartSocketLoop(true, true, false), "terminated worker must be replaced");
 }
 ''')
@@ -23,8 +23,13 @@ void RunTests() {
 def test_startup_and_shutdown_own_supervisor_and_worker():
     text = (ROOT / "src/Server.as").read_text()
     assert "@g_serverWorker = startnew" in text
-    assert "startnew(CoroutineFunc(SuperviseServerLoop))" in text
+    assert "@g_serverSupervisor = startnew(CoroutineFunc(SuperviseServerLoop))" in text
     assert "g_serverWorker.IsRunning()" in text
     assert "ShouldRestartSocketLoop(g_running" in text
     body = text[text.index("void SuperviseServerLoop("):text.index("void StartServerAfterDelay(")]
-    assert body.index("CloseListener();") < body.index("@g_serverWorker = startnew")
+    assert body.index("CloseListener();") < body.index("LaunchServerWorker()")
+    launch = text[text.index("bool LaunchServerWorker("):text.index("void SuperviseServerLoop(")]
+    assert "catch" in launch
+    assert 'g_serverWorkerError = "server worker launch returned no handle"' in launch
+    assert "CloseListener();" in launch
+    assert "if (!LaunchServerWorker()) sleep(1000);" in body

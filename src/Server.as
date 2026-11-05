@@ -27,14 +27,16 @@ namespace TmMcp {
     string g_boundHost = "";
     int g_boundPort = 0;
     awaitable@ g_serverWorker;
+    awaitable@ g_serverSupervisor;
+    string g_serverWorkerError = "";
 
     void Start() {
         if (g_running) return;
         g_running = true;
         g_starting = S_TmMcpEnableSocket;
         trace("TM Control MCP startup requested; socket delay " + S_TmMcpStartupDelayMs + " ms; enable=" + (S_TmMcpEnableSocket ? "true" : "false"));
-        @g_serverWorker = startnew(CoroutineFunc(StartServerAfterDelay));
-        startnew(CoroutineFunc(SuperviseServerLoop));
+        LaunchServerWorker();
+        @g_serverSupervisor = startnew(CoroutineFunc(SuperviseServerLoop));
     }
 
     void Shutdown() {
@@ -59,6 +61,18 @@ namespace TmMcp {
         }
     }
 
+    bool LaunchServerWorker() {
+        try {
+            @g_serverWorker = startnew(CoroutineFunc(StartServerAfterDelay));
+            if (g_serverWorker !is null) { g_serverWorkerError = ""; return true; }
+            g_serverWorkerError = "server worker launch returned no handle";
+        } catch { g_serverWorkerError = "server worker launch failed: " + getExceptionInfo(); }
+        g_starting = false;
+        warn("TM Control MCP " + g_serverWorkerError + "; listener closed; retrying in supervisor");
+        CloseListener();
+        return false;
+    }
+
     void SuperviseServerLoop() {
         while (g_running) {
             sleep(500);
@@ -71,7 +85,7 @@ namespace TmMcp {
             warn("TM Control MCP socket loop terminated; closing orphan listener and restarting");
             CloseListener();
             g_starting = S_TmMcpEnableSocket;
-            @g_serverWorker = startnew(CoroutineFunc(StartServerAfterDelay));
+            if (!LaunchServerWorker()) sleep(1000);
         }
     }
 
@@ -231,6 +245,9 @@ namespace TmMcp {
         o["boundHost"] = g_boundHost;
         o["boundPort"] = g_boundPort;
         o["activeClients"] = int(g_activeClients);
+        o["workerRunning"] = g_serverWorker !is null && g_serverWorker.IsRunning();
+        o["supervisorRunning"] = g_serverSupervisor !is null && g_serverSupervisor.IsRunning();
+        if (g_serverWorkerError.Length > 0) o["workerError"] = g_serverWorkerError;
         o["traceRequests"] = S_TmMcpTraceRequests;
         o["requestTracePath"] = TmMcpRequestTracePath();
         if (S_TmMcpEnableSocket && IsSocketListening()) o["state"] = "listening";
