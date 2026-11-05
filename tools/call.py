@@ -659,6 +659,12 @@ def main() -> int:
 
     # Long-running tools need a bigger socket timeout
     call_timeout = args.timeout
+    # Answering a dialog can synchronously tear down an editor for several
+    # seconds. Map switches also expose waitMs up to ten seconds. Keep the
+    # ordinary read timeout short while allowing these transitions to finish.
+    if args.route_or_tool in {"RespondDialog", "OpenMapInEditor", "PlayMap",
+                              "BackToMainMenu", "ControlValidation", "EditNewMap"}:
+        call_timeout = max(call_timeout, 30.0)
     if args.route_or_tool == "WaitUntil" and isinstance(input_data, dict):
         # Plugin default is 20s when timeoutMs is omitted.
         wait_ms = input_data["timeoutMs"] if "timeoutMs" in input_data else int(DEFAULT_WAIT_TIMEOUT_SECONDS * 1000)
