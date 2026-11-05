@@ -552,15 +552,8 @@ namespace TmMcp {
             auto destFid = Fids::GetFidsFile(file.ParentFolder, dest);
             if (destFid !is null) {
                 output["destFid"] = FidsFileJson(destFid, false);
-                output["existsOnDisk"] = destFid.OSCheckIfExists();
                 if (destFid.OSCheckIfExists()) extractionPath = string(destFid.FullFileName);
             }
-        }
-        if (!extracted && dest.Length == 0) {
-            Json::Value@ fail = MakeError("Extract returned false", "EXTRACT_FAILED", true, "",
-                "Packed/zipped fids usually extract next to the pack; check destFid / existsOnDisk.");
-            fail["output"] = output;
-            return fail;
         }
         bool outputExists = false;
         uint64 actualBytes = 0;
@@ -583,7 +576,8 @@ namespace TmMcp {
         output["verified"] = state == "verified";
         if (statError.Length > 0) output["statError"] = statError;
         if (state == "size_mismatch" || state == "missing" || state == "api_failed") {
-            auto fail = MakeError("Extraction output was not verified: " + state, "EXTRACT_UNVERIFIED", true, "",
+            auto fail = MakeError("Extraction output was not verified: " + state,
+                state == "api_failed" ? "EXTRACT_FAILED" : "EXTRACT_UNVERIFIED", true, "",
                 "Inspect extractionPath / actualBytes. A default-path 4096-byte truncation has been observed; explicitly retry hookMethod:true if appropriate, then verify again. No automatic fallback or overwrite is performed.");
             fail["output"] = output;
             return fail;

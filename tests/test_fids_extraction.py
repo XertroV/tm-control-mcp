@@ -21,3 +21,12 @@ void RunTests() {
 ''')
     result = subprocess.run([str(as_runner), str(ROOT / "src/FidsExtractionPolicy.as"), str(case)], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_production_collects_output_evidence_even_when_api_returns_false():
+    text = (ROOT / "src/FidsTools.as").read_text()
+    body = text[text.index("Json::Value@ FidsActionExtract("):text.index("Json::Value@ FidsActionGetFullPath(")]
+    assert body.count('output["existsOnDisk"] =') == 1
+    assert body.index("FidsExtractionState(extracted,") < body.index('state == "api_failed"')
+    assert 'output["actualBytes"]' in body
+    assert "if (!extracted && dest.Length == 0)" not in body
