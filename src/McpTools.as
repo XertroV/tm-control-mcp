@@ -357,6 +357,7 @@ namespace TmMcp {
             if (c is null) continue;
             Json::Value f = Json::Object();
             f["idName"] = c.Id.GetName();
+            f["visible"] = c.IsVisible && !c.IsHiddenExternal && !c.IsHiddenInternal;
             frames.Add(f);
         }
         return frames;
@@ -408,7 +409,7 @@ namespace TmMcp {
         auto editor = app is null ? null : cast<CGameCtnEditorFree>(app.Editor);
         if (editor is null || editor.EditorInterface is null || editor.EditorInterface.InterfaceRoot is null) return "";
         auto frame = _DlgFindChild(editor.EditorInterface.InterfaceRoot, "FrameTempMsg");
-        if (frame is null) return "";
+        if (frame is null || !frame.IsVisible || frame.IsHiddenExternal || frame.IsHiddenInternal) return "";
         auto label = cast<CControlLabel>(_DlgFindChild(cast<CControlContainer>(frame), "LabelTempMsg"));
         if (label is null) return "";
         // The live text sits on the label's nod (like the SaveAs entry), not the
@@ -2289,6 +2290,24 @@ Json::Value@ GetMapInfo(Json::Value &in input) {
         return MakeSuccess(output);
     }
 
+    void AttachValidationWarning(Json::Value &inout output) {
+        auto summary = BuildDialogSummary();
+        output["dialogAfter"] = summary;
+        output["warning"] = "";
+        bool blocking = DialogIsBlocking(summary) || _LeaveDialogIsUp();
+        auto frames = summary["editorFrames"];
+        for (uint i = 0; i < frames.Length; i++) {
+            if (frames[i].HasKey("visible") && bool(frames[i]["visible"])
+                && _IsLeaveBlockingFrameName(string(frames[i]["idName"]))) blocking = true;
+        }
+        bool message = string(summary["tempMessage"]).Length > 0;
+        if (blocking || message) {
+            output["warning"] = blocking
+                ? "A game dialog is visible after validation. Inspect dialogAfter and answer it with RespondDialog before continuing."
+                : "The editor is showing a message after validation; inspect dialogAfter.tempMessage. If a dialog requires an answer, use RespondDialog.";
+        }
+    }
+
     Json::Value@ ControlValidation(Json::Value &in input) {
         auto editor = GetEditor();
         auto pmt = editor is null ? null : cast<CGameEditorPluginMapMapType>(editor.PluginMapType);
@@ -2333,6 +2352,7 @@ Json::Value@ GetMapInfo(Json::Value &in input) {
         output["actions"] = actions;
         output["before"] = before;
         output["after"] = ValidationToJson(pmt);
+        AttachValidationWarning(output);
         return MakeSuccess(output);
     }
 
