@@ -26,13 +26,15 @@ namespace TmMcp {
     uint g_activeClients = 0;
     string g_boundHost = "";
     int g_boundPort = 0;
+    awaitable@ g_serverWorker;
 
     void Start() {
         if (g_running) return;
         g_running = true;
         g_starting = S_TmMcpEnableSocket;
         trace("TM Control MCP startup requested; socket delay " + S_TmMcpStartupDelayMs + " ms; enable=" + (S_TmMcpEnableSocket ? "true" : "false"));
-        startnew(CoroutineFunc(StartServerAfterDelay));
+        @g_serverWorker = startnew(CoroutineFunc(StartServerAfterDelay));
+        startnew(CoroutineFunc(SuperviseServerLoop));
     }
 
     void Shutdown() {
@@ -54,6 +56,22 @@ namespace TmMcp {
                 g_socket.Close();
             } catch {}
             @g_socket = null;
+        }
+    }
+
+    void SuperviseServerLoop() {
+        while (g_running) {
+            sleep(500);
+            if (!g_running) break;
+            if (!ShouldRestartSocketLoop(g_running, g_serverWorker !is null,
+                g_serverWorker !is null && g_serverWorker.IsRunning())) continue;
+            // A VM script-timeout bypasses the worker's catch/finally paths.
+            // Its awaitable termination is definitive; elapsed wall time alone
+            // is not, since the whole game may have stalled between frames.
+            warn("TM Control MCP socket loop terminated; closing orphan listener and restarting");
+            CloseListener();
+            g_starting = S_TmMcpEnableSocket;
+            @g_serverWorker = startnew(CoroutineFunc(StartServerAfterDelay));
         }
     }
 
@@ -103,7 +121,7 @@ namespace TmMcp {
                 @client = g_socket.Accept();
             } catch {
                 warn("TM Control MCP accept failed: " + getExceptionInfo());
-                g_listening = false;
+                CloseListener();
                 sleep(1000);
                 continue;
             }
@@ -115,6 +133,7 @@ namespace TmMcp {
                     startnew(CoroutineFuncUserdata(HandleClient), client);
                 }
             }
+            yield();
         }
         CloseListener();
     }
