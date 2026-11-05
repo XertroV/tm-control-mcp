@@ -9,6 +9,20 @@ import subprocess
 import sys
 import time
 
+from tm_get_running_pids import find_game_dialogs
+
+
+def socket_failure(message, pretty, pids, host):
+    # These windows belong to local PIDs; never attach them to a remote server.
+    dialogs = find_game_dialogs(pids) if pids and host in {"localhost", "127.0.0.1", "::1"} else []
+    confirmed = next((d for d in dialogs if d["kind"] in {"crash", "message"}), None)
+    hint = ("A crash/message box is visible for Trackmania; inspect and resolve it before retrying. "
+            "No restart or dismissal was performed." if confirmed else
+            "No crash/message box was identified (display inspection may be unavailable). "
+            "If connected but no reply arrived, the server loop may have stopped; inspect Openplanet.log.")
+    print_json_error(message, pretty, trackmaniaPids=pids, dialogs=dialogs, hint=hint)
+    return 10 if confirmed else 4
+
 
 def is_trackmania_process(cmdline: bytes) -> bool:
     if not cmdline:
@@ -693,13 +707,10 @@ def main() -> int:
                 if b"\n" in chunk:
                     break
     except (ConnectionRefusedError, TimeoutError, socket.timeout, OSError) as exc:
-        print_json_error(
+        return socket_failure(
             f"Could not reach TM Control MCP at {args.host}:{args.port}: {exc}",
-            args.pretty,
-            trackmaniaPids=pids,
-            hint="If Trackmania.exe is listed but the socket does not respond, Openplanet or the plugin may be frozen; restart the game or reload tm-control-mcp.",
+            args.pretty, pids, args.host,
         )
-        return 4
 
     response_text = b"".join(chunks).decode().strip()
     if not response_text:

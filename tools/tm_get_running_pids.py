@@ -21,6 +21,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -69,7 +70,7 @@ def _xdotool(*args):
     env.setdefault("DISPLAY", ":0")
     return subprocess.run(
         ["xdotool", *args], check=True,
-        capture_output=True, text=True, timeout=5, env=env,
+        capture_output=True, text=True, timeout=0.5, env=env,
     ).stdout.strip()
 
 
@@ -82,7 +83,23 @@ def get_window_pid(xid):
         return None
 
 
-def _x11_windows(pid):
+def _window_properties(xid):
+    """Read advisory window-manager metadata without capturing pixels or focus."""
+    env = dict(os.environ)
+    env.setdefault("DISPLAY", ":0")
+    try:
+        text = subprocess.run(
+            ["xprop", "-id", str(xid), "_NET_WM_WINDOW_TYPE", "WM_TRANSIENT_FOR"],
+            check=True, capture_output=True, text=True, timeout=0.5, env=env,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    transient = re.search(r"WM_TRANSIENT_FOR[^\n]*?(0x[0-9a-fA-F]+)", text)
+    return {"dialogType": "_NET_WM_WINDOW_TYPE_DIALOG" in text,
+            "transientFor": int(transient[1], 16) if transient else None}
+
+
+def _x11_windows(pid, properties=False, deadline=None):
     """List only windows whose X11 PID property matches this process."""
     wins = {}
     try:
@@ -90,6 +107,8 @@ def _x11_windows(pid):
     except (OSError, subprocess.SubprocessError, ValueError):
         return []
     for xid in xids:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         if get_window_pid(xid) != pid:
             continue
         try:
@@ -104,12 +123,41 @@ def _x11_windows(pid):
                 "width": int(geo["WIDTH"]),
                 "height": int(geo["HEIGHT"]),
             }
+            if properties and wins[xid]["width"] >= 40 and wins[xid]["height"] >= 40:
+                wins[xid].update(_window_properties(xid))
         except (OSError, subprocess.SubprocessError, ValueError, KeyError):
             continue
     out = sorted(wins.values(), key=lambda w: w["width"] * w["height"], reverse=True)
     # Largest client areas first; keep small helpers available for explicit selection.
     return [w for w in out if w["width"] > 8 and w["height"] > 8] + \
            [w for w in out if w["width"] <= 8 or w["height"] <= 8]
+
+
+def classify_dialogs(windows):
+    """Candidates are evidence of a window, never proof that a process crashed."""
+    sizeable = sorted((w for w in windows if w["width"] >= 40 and w["height"] >= 40),
+                      key=lambda w: w["width"] * w["height"], reverse=True)
+    dialogs = []
+    for index, win in enumerate(sizeable):
+        title = win.get("name", "")
+        crash = bool(re.search(r"\b(crash|exception|assert(?:ion)?)\b", title, re.I))
+        message = win.get("dialogType") or win.get("transientFor") or re.search(r"\berror\b", title, re.I)
+        if index == 0 and not (crash or message):
+            continue
+        dialogs.append(dict(win, kind="crash" if crash else "message" if message else "candidate",
+                            evidence="title" if crash else "window-metadata" if message else "secondary-window"))
+    return sorted(dialogs, key=lambda w: {"crash": 0, "message": 1, "candidate": 2}[w["kind"]])
+
+
+def find_game_dialogs(pids):
+    deadline = time.monotonic() + 2.0
+    dialogs = []
+    for pid in pids:
+        if time.monotonic() >= deadline:
+            break
+        dialogs.extend(dict(dialog, pid=pid) for dialog in classify_dialogs(
+            _x11_windows(pid, properties=True, deadline=deadline)))
+    return dialogs
 
 
 def find_instances():
@@ -127,13 +175,15 @@ def find_instances():
         except (OSError, ValueError, IndexError):
             # Processes can exit or become inaccessible after reading cmdline.
             continue
+        windows = _x11_windows(pid, properties=True)
         instances.append({
             "game": game,
             "pid": pid,
             "argv0": argv[0] if argv else "",
             "started_epoch_s": started_s,
             "started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(started_s)),
-            "windows": _x11_windows(pid),
+            "windows": windows,
+            "dialogs": classify_dialogs(windows),
         })
     instances.sort(key=lambda i: (i["game"], i["started_epoch_s"]))
     return instances
