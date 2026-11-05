@@ -1,4 +1,22 @@
 namespace TmMcp {
+    bool PlayMapPathIsAbsolute(const string &in path) {
+        return path.StartsWith("/") || path.StartsWith("\\")
+            || (path.Length >= 3 && path[1] == 58 && (path[2] == 47 || path[2] == 92));
+    }
+
+    string ResolvePlayMapLocalPath(const string &in path) {
+        if (PlayMapPathIsAbsolute(path)) return IO::FileExists(path) ? path : "";
+        string relative = path.Replace("\\", "/");
+        if (!relative.StartsWith("Maps/") && !relative.StartsWith("maps/")) relative = "Maps/" + relative;
+        auto fid = Fids::GetUser(relative);
+        if (fid !is null && fid.OSCheckIfExists()) {
+            string full = string(fid.FullFileName);
+            if (PlayMapPathIsAbsolute(full) && IO::FileExists(full)) return full;
+        }
+        string fallback = IO::FromUserGameFolder(relative);
+        return PlayMapPathIsAbsolute(fallback) && IO::FileExists(fallback) ? fallback : "";
+    }
+
     Json::Value PlayMapPreflight(const string &in path) {
         auto result = Json::Object();
         result["coverage"] = "envelope-only";
@@ -6,18 +24,9 @@ namespace TmMcp {
         result["state"] = "unresolved";
         result["warning"] = "Embedded map items are not validated. A plausible GBX envelope does not prevent native loader crashes; only load trusted content.";
         if (path.Contains("://")) { result["state"] = "remote_uninspected"; return result; }
-        string resolved = path;
-        if (!IO::FileExists(resolved)) {
-            string relative = FidsNormPath(path);
-            if (!relative.ToLower().StartsWith("maps/")) relative = "Maps/" + relative;
-            resolved = IO::FromUserGameFolder(relative);
-            auto fid = Fids::GetUser(relative);
-            if (fid !is null && fid.OSCheckIfExists() && string(fid.FullFileName) != "<virtual>") {
-                resolved = string(fid.FullFileName);
-            }
-        }
-        if (!IO::FileExists(resolved)) return result; // Engine paths may be virtual.
         try {
+            string resolved = ResolvePlayMapLocalPath(path);
+            if (resolved.Length == 0) return result; // Engine paths may be virtual.
             IO::File f(resolved, IO::FileMode::Read);
             uint64 size = f.Size();
             string bytes = "";

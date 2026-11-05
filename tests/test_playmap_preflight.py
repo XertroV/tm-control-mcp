@@ -37,3 +37,40 @@ def test_preflight_precedes_scheduling_and_native_loading():
     preflight = (ROOT / "src/PlayMapPreflight.as").read_text()
     assert "Fids::Preload" not in preflight
     assert "f.Read(21)" in preflight
+
+
+def test_resolver_ignores_working_directory_decoy(as_runner, tmp_path):
+    text = (ROOT / "src/PlayMapPreflight.as").read_text()
+    resolver = text[text.index("    bool PlayMapPathIsAbsolute("):text.index("    Json::Value PlayMapPreflight(")]
+    case = tmp_path / "paths.as"
+    case.write_text('''
+class Fid {
+    string FullFileName = "C:/Maps/Example.Map.Gbx";
+    bool OSCheckIfExists() { return true; }
+}
+bool fidFound = true, fallbackFound = true;
+namespace Fids {
+    Fid@ GetUser(const string &in path) { return fidFound ? Fid() : null; }
+}
+namespace IO {
+    bool FileExists(const string &in path) {
+        // The decoy exists too; only the user's actual map may be selected.
+        return path == "Example.Map.Gbx" || path == "C:/Maps/Example.Map.Gbx"
+            || (fallbackFound && path == "C:/User/Maps/Example.Map.Gbx");
+    }
+    string FromUserGameFolder(const string &in relative) { return "C:/User/" + relative; }
+}
+namespace TmMcp {
+''' + resolver + '''
+}
+void RunTests() {
+    Check(TmMcp::ResolvePlayMapLocalPath("Example.Map.Gbx") == "C:/Maps/Example.Map.Gbx", "fid target wins over working-directory decoy");
+    fidFound = false;
+    Check(TmMcp::ResolvePlayMapLocalPath("Example.Map.Gbx") == "C:/User/Maps/Example.Map.Gbx", "checked user-map fallback");
+    fallbackFound = false;
+    Check(TmMcp::ResolvePlayMapLocalPath("Example.Map.Gbx") == "", "decoy is not an unresolved target fallback");
+    Check(TmMcp::ResolvePlayMapLocalPath("C:/Maps/Example.Map.Gbx") == "C:/Maps/Example.Map.Gbx", "explicit absolute path");
+}
+''')
+    result = subprocess.run([str(as_runner), str(case)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
