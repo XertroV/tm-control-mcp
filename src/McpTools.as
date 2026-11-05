@@ -1982,6 +1982,16 @@ namespace TmMcp {
         if (path.Length == 0) return MakeError("path is empty");
         if (!Permissions::PlayLocalMap()) return MakeError("PlayLocalMap permission unavailable");
 
+        auto preflight = PlayMapPreflight(path);
+        if (string(preflight["state"]) == "invalid") {
+            auto error = MakeError("Map file has an invalid or truncated GBX envelope", "INVALID_MAP_FILE", false);
+            auto rejected = Json::Object();
+            rejected["queued"] = false;
+            rejected["preflight"] = preflight;
+            error["output"] = rejected;
+            return error;
+        }
+
         Json::Value spec = Json::Object();
         spec["path"] = path;
         if (input.HasKey("mode")) spec["mode"] = string(input["mode"]);
@@ -1991,6 +2001,8 @@ namespace TmMcp {
         Json::Value output = Json::Object();
         output["queued"] = true;
         output["path"] = path;
+        output["preflight"] = preflight;
+        output["contentWarning"] = string(preflight["warning"]);
         if (input.HasKey("mode")) output["mode"] = string(input["mode"]);
         int waitMs = input.HasKey("waitMs") ? int(input["waitMs"]) : 1500;
         if (waitMs > 0) {

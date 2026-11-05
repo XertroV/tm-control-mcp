@@ -246,6 +246,14 @@ Errors may include structured fields:
 
 ### Client: `tools/call.py`
 
+`PlayMap` performs a bounded raw-file GBX envelope check before queuing a local
+map. Invalid or truncated envelopes return `INVALID_MAP_FILE`; unresolved,
+remote and unsupported files report an unverified preflight state. The check
+does **not** parse compressed map bodies or validate embedded items. Malformed
+embedded content can still crash the native game loader, outside AngelScript
+exception handling; `queued:true` and `envelope_only` do not certify safe content.
+Use trusted maps and inspect `preflight` / `contentWarning` in results.
+
 ```bash
 python3 tools/call.py status
 python3 tools/call.py --pretty GetMode
