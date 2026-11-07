@@ -188,10 +188,29 @@ try {
                 throw 'Heartbeat plus event exceeds the configured JSONL size limit.'
             }
             # Only the oldest of our three backups is removed; reader handles must share delete.
-            if ([IO.File]::Exists($script:EventsPath + '.3')) { [IO.File]::Delete($script:EventsPath + '.3') }
+            $oldestDeleted = $false
+            if ([IO.File]::Exists($script:EventsPath + '.3')) {
+                [IO.File]::Delete($script:EventsPath + '.3')
+                $oldestDeleted = $true
+            }
             for ($i = 2; $i -ge 1; $i--) {
                 if ([IO.File]::Exists($script:EventsPath + ".$i")) {
-                    [IO.File]::Move($script:EventsPath + ".$i", $script:EventsPath + '.' + ($i + 1))
+                    while ($true) {
+                        try {
+                            [IO.File]::Move($script:EventsPath + ".$i", $script:EventsPath + '.' + ($i + 1))
+                            break
+                        } catch {
+                            # DeleteFile leaves an open .3 delete-pending until its last
+                            # reader closes. Reusing that name can fail even with delete
+                            # sharing. Retry only this first move after our own deletion;
+                            # no append/growth or further rotation occurs while waiting.
+                            $cause = $_.Exception
+                            while ($cause.InnerException) { $cause = $cause.InnerException }
+                            $code = $cause.HResult -band 0xffff
+                            if ($i -ne 2 -or -not $oldestDeleted -or $code -notin @(5, 32, 80, 183)) { throw }
+                            Start-Sleep -Milliseconds 50
+                        }
+                    }
                 }
             }
             if ([IO.File]::Exists($script:EventsPath)) { [IO.File]::Move($script:EventsPath, $script:EventsPath + '.1') }

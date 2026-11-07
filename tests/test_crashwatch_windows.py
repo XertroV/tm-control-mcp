@@ -1,11 +1,13 @@
 """Windows structural checks; PowerShell parsing/interop compilation where pwsh exists."""
 from pathlib import Path
 import base64
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -129,6 +131,94 @@ def test_remote_reader_handle_allows_dotnet_append_and_rotation(tmp_path):
     result = subprocess.run([executable, "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     assert Path(f"{path}.1").read_bytes() == b"before\nafter"
+
+
+def test_windows_rotation_waits_only_for_reuse_of_its_deleted_oldest_name():
+    source = (WINDOWS / "watch.ps1").read_text()
+    assert "$oldestDeleted = $true" in source
+    assert "$i -ne 2 -or -not $oldestDeleted" in source
+    assert "$code -notin @(5, 32, 80, 183)" in source
+    assert "Start-Sleep -Milliseconds 50" in source
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1 delete-pending semantics")
+@pytest.mark.parametrize("reader_kind", ["python", "remote"])
+def test_actual_writer_full_ring_survives_oldest_held_open(tmp_path, reader_kind):
+    executable = shutil.which("powershell.exe")
+    assert executable, "this fixture deliberately checks Windows PowerShell 5.1/.NET Framework"
+    source = (WINDOWS / "watch.ps1").read_text()
+    guards = source[source.index("function Assert-RegularPath"):source.index("$localAppData =")]
+    write_record = source[source.index("    function Write-Record"):source.index("    function Read-Games")]
+    path = tmp_path / "events.jsonl"
+    from crashwatch_core import iso_time
+    base = dict(schema_version=1, event="heartbeat", ts=iso_time(), host="x-lappy", watcher_id="native-ring",
+                interval_seconds=5, active_boxes=[], games=[], errors=[])
+    old = (json.dumps(base | {"padding": "x" * 3600}) + "\n").encode()
+    box = dict(pid=12, birth="native-birth", window_id="0x1234", title='Crash in "Openplanet.dll"', first_seen=base["ts"])
+    record = base | {"active_boxes": [box]}
+    assert len(old) < 4096 < len(old) + len(json.dumps(record).encode())
+    for suffix in ("", ".1", ".2", ".3"):
+        Path(str(path) + suffix).write_bytes(old)
+
+    def literal(value):
+        return "'" + str(value).replace("'", "''") + "'"
+
+    ready, done, release = (tmp_path / name for name in ("writer-ready", "writer-done", "release-reader"))
+    writer_script = tmp_path / "write-real-record.ps1"
+    writer_script.write_text("$ErrorActionPreference='Stop'\n$MaxBytes=4096\n"
+                             + "$script:EventsPath=" + literal(path) + "\n"
+                             + "$script:Utf8=[Text.UTF8Encoding]::new($false)\n$script:SnapshotLine=$null\n"
+                             + guards + write_record
+                             + "$record=" + literal(json.dumps(record)) + " | ConvertFrom-Json\n"
+                             + "[IO.File]::WriteAllText(" + literal(ready) + ",'ready')\nWrite-Record $record\n"
+                             + "[IO.File]::WriteAllText(" + literal(done) + ",'done')\n")
+    writer, remote_reader = None, None
+    held = None
+
+    def wait_for(file, process):
+        deadline = time.monotonic() + 15
+        while not file.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert file.exists(), "fixture process exited or timed out before its barrier"
+
+    try:
+        if reader_kind == "python":
+            held = reader.open_event_file(Path(str(path) + ".3"))
+        else:
+            opener = re.search(r"\$stream=\[IO.File\]::Open\(.*?\);", remote_script()).group(0)
+            reader_ready = tmp_path / "reader-ready"
+            hold_script = tmp_path / "hold-remote-reader.ps1"
+            hold_script.write_text("$ErrorActionPreference='Stop'\n$f=" + literal(str(path) + ".3") + "\n" + opener
+                                   + "try{[IO.File]::WriteAllText(" + literal(reader_ready) + ",'ready');"
+                                   + "while(-not [IO.File]::Exists(" + literal(release) + ")){Start-Sleep -Milliseconds 20}}"
+                                   + "finally{$stream.Dispose()}\n")
+            remote_reader = subprocess.Popen([executable, "-NoProfile", "-NonInteractive", "-File", str(hold_script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            wait_for(reader_ready, remote_reader)
+        writer = subprocess.Popen([executable, "-NoProfile", "-NonInteractive", "-File", str(writer_script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        wait_for(ready, writer)
+        time.sleep(0.25)
+        assert writer.poll() is None and not done.exists(), "writer must survive while .3 is held open"
+        if held is not None:
+            held.close()
+            held = None
+        release.write_text("release")
+        stdout, stderr = writer.communicate(timeout=15)
+        assert writer.returncode == 0 and done.exists(), (stdout, stderr)
+        if remote_reader:
+            remote_reader.communicate(timeout=15)
+            assert remote_reader.returncode == 0
+        state = reader.get_status("x-lappy", path=path)
+        assert state["active_boxes"] == [box] and not state["errors"]
+        files = list(tmp_path.glob("events.jsonl*"))
+        assert len(files) == 4 and all(file.stat().st_size <= 4096 for file in files)
+    finally:
+        if held is not None:
+            held.close()
+        release.write_text("release")
+        for process in (writer, remote_reader):
+            if process is not None and process.poll() is None:
+                process.kill()  # Only this scratch PowerShell fixture process; never a game.
+                process.communicate(timeout=5)
 
 
 @pytest.mark.parametrize("name", ["watch.ps1", "install.ps1", "uninstall.ps1"])

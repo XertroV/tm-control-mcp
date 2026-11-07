@@ -139,6 +139,10 @@ records spanning multiple 8 KB SSH reads are reassembled before JSON parsing.
 Windows read handles explicitly share writes and deletes so polling cannot
 block the watcher from appending or rotating. A missing or incomplete current
 file is unhealthy, even if older backups contain a fresh all-clear heartbeat.
+On Windows, deletion of an open oldest backup can keep its name occupied until
+the last reader closes. Rotation waits for that name to become reusable before
+continuing, without appending beyond the size bound. An unusually long wait
+ages the heartbeat and makes status unhealthy; it never produces an all-clear.
 Only the two named hosts are accepted. `--events` always means a local file.
 
 `tools/call.py` consults this reader before its existing #17 desktop probe when
